@@ -9,26 +9,34 @@
     #bar{position:fixed;inset:12px 12px auto 12px;display:flex;gap:8px;align-items:center;z-index:10;background:#171718;border:1px solid #2a2a2e;border-radius:10px;padding:8px 10px}
     select,button,input{background:#1f1f22;border:1px solid #333;color:#eee;padding:6px 8px;border-radius:8px}
     #app{position:fixed;inset:0}
+    label{opacity:.9}
   </style>
 </head>
 <body>
   <div id="bar">
-    <label>Animation:</label>
+    <label>BG:</label>
+    <select id="bgMode">
+      <option value="hdr">HDR</option>
+      <option value="gradient" selected>Gradient</option>
+      <option value="solid">Solid</option>
+    </select>
+    <label>Anim:</label>
     <select id="clips"><option>—</option></select>
     <button id="playPause">Pause</button>
-    <button id="reload">Reload (cache-bust)</button>
+    <button id="reload">Reload</button>
     <input id="url" size="40" placeholder="?model=https://.../model.glb" />
     <button id="loadBtn">Load URL</button>
   </div>
   <canvas id="app"></canvas>
 
   <script type="module">
-    // ===== Imports (ESM) =====
+    // ===== Imports =====
     import * as THREE from 'https://unpkg.com/three@0.165.0/build/three.module.js';
     import { OrbitControls } from 'https://unpkg.com/three@0.165.0/examples/jsm/controls/OrbitControls.js';
     import { GLTFLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/GLTFLoader.js';
     import { DRACOLoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/DRACOLoader.js';
     import { RoomEnvironment } from 'https://unpkg.com/three@0.165.0/examples/jsm/environments/RoomEnvironment.js';
+    import { RGBELoader } from 'https://unpkg.com/three@0.165.0/examples/jsm/loaders/RGBELoader.js';
 
     // ===== DOM =====
     const canvas = document.getElementById('app');
@@ -37,9 +45,10 @@
     const reloadBtn = document.getElementById('reload');
     const urlInput = document.getElementById('url');
     const loadBtn = document.getElementById('loadBtn');
+    const bgModeSel = document.getElementById('bgMode');
 
     // ===== Renderer / Scene / Camera =====
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha:false });
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -47,7 +56,8 @@
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f0f10);
+    scene.background = new THREE.Color(0x101014);
+
     const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 100);
     camera.position.set(2.2, 1.6, 2.2);
 
@@ -55,11 +65,13 @@
     controls.target.set(0, 1.0, 0);
     controls.enableDamping = true;
 
-    // IBL
+    // PMREM (IBL конвертер)
     const pmrem = new THREE.PMREMGenerator(renderer);
+
+    // Базовое «комнатное» окружение (мягкий свет)
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
-    // Ground (мягкая тень-плоскость)
+    // Матовое «основание»
     const ground = new THREE.Mesh(
       new THREE.CircleGeometry(4, 64),
       new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
@@ -71,79 +83,130 @@
     // ===== Loaders =====
     const loader = new GLTFLoader();
     const draco = new DRACOLoader();
-    draco.setDecoderPath('https://unpkg.com/three@0.165.0/examples/jsm/libs/draco/'); // на случай .glb с Draco
+    draco.setDecoderPath('https://unpkg.com/three@0.165.0/examples/jsm/libs/draco/');
     loader.setDRACOLoader(draco);
 
+    // ===== Background variants =====
+    const HDR_URL = 'https://marcofugaro.github.io/threejs-modern-app/assets/venice_sunset_1k.hdr';
+    let hdrEnvMap = null;
+    let gradientTex = null;
+
+    // Градиент как текстура (CanvasTexture)
+    function makeGradientTexture(top = '#0f0f10', bottom = '#222229') {
+      const c = document.createElement('canvas');
+      c.width = c.height = 512;
+      const g = c.getContext('2d');
+      const grd = g.createLinearGradient(0,0,0,512);
+      grd.addColorStop(0, top);
+      grd.addColorStop(1, bottom);
+      g.fillStyle = grd;
+      g.fillRect(0,0,512,512);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    }
+
+    // Предзагрузка HDR → PMREM
+    new RGBELoader().load(HDR_URL, (tex) => {
+      hdrEnvMap = pmrem.fromEquirectangular(tex).texture;
+      tex.dispose();
+      // если пользователь уже выбрал HDR — применим сразу
+      if (bgModeSel.value === 'hdr') applyBackground('hdr');
+    });
+
+    function applyBackground(mode) {
+      if (mode === 'hdr') {
+        // фон = HDR, окружение = HDR (красивые отражения)
+        if (hdrEnvMap) {
+          scene.background = hdrEnvMap;
+          scene.environment = hdrEnvMap;
+        }
+      } else if (mode === 'gradient') {
+        // фон = градиент, окружение = RoomEnvironment (мягкое)
+        if (!gradientTex) gradientTex = makeGradientTexture();
+        scene.background = gradientTex;
+        scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      } else {
+        // фон = однотонный тёмный, окружение = RoomEnvironment
+        scene.background = new THREE.Color(0x101014);
+        scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      }
+      renderer.render(scene, camera);
+    }
+
+    bgModeSel.addEventListener('change', () => applyBackground(bgModeSel.value));
+    // дефолт: Gradient
+    applyBackground('gradient');
+
+    // ===== Model & animation =====
     let mixer = null;
     let modelRoot = null;
     let actions = [];
     let currentAction = null;
 
-    // ===== Helpers =====
     function getModelUrl() {
       const q = new URLSearchParams(location.search);
       return q.get('model') || './avatar.glb';
     }
 
     async function loadModel(url) {
-      // cache-bust для «Reload»
-      if (url.includes('?')) url += '&v=' + Date.now(); else url += '?v=' + Date.now();
+      // cache-bust
+      url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
 
-      // очистка прежней сцены/миксера
+      // cleanup
       if (mixer) { mixer.stopAllAction(); mixer.uncacheRoot(modelRoot); mixer = null; }
-      if (modelRoot) { scene.remove(modelRoot); modelRoot.traverse(o=>{ if(o.isMesh){ o.geometry?.dispose?.(); o.material?.dispose?.(); }}); modelRoot = null; }
+      if (modelRoot) {
+        scene.remove(modelRoot);
+        modelRoot.traverse(o=>{ if(o.isMesh){ o.geometry?.dispose?.(); o.material?.dispose?.(); }});
+        modelRoot = null;
+      }
       actions = []; currentAction = null;
 
       const gltf = await loader.loadAsync(url);
       modelRoot = gltf.scene;
       scene.add(modelRoot);
 
-      // нормализация масштаба/позы
+      // автоцентр и масштаб
       modelRoot.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
-
-      // автоцентрирование и авто-масштаб
       const box = new THREE.Box3().setFromObject(modelRoot);
       const size = new THREE.Vector3(); box.getSize(size);
       const center = new THREE.Vector3(); box.getCenter(center);
-      modelRoot.position.sub(center); // в (0,0,0)
+      modelRoot.position.sub(center);
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      const scale = 1.6 / maxDim;      // чтобы удобно в кадр
+      const scale = 1.6 / maxDim;
       modelRoot.scale.setScalar(scale);
 
-      // Анимации
+      // анимации
       clipsSel.innerHTML = '';
-      if (gltf.animations && gltf.animations.length) {
+      if (gltf.animations?.length) {
         mixer = new THREE.AnimationMixer(modelRoot);
         actions = gltf.animations.map(clip => mixer.clipAction(clip));
-        // заполнить селект
         gltf.animations.forEach((clip, i) => {
           const opt = document.createElement('option');
           opt.value = i; opt.textContent = clip.name || `Clip ${i+1}`;
           clipsSel.appendChild(opt);
         });
-        // автостарт первой
         currentAction = actions[0];
         currentAction.reset().play();
         playPauseBtn.textContent = 'Pause';
       } else {
         const opt = document.createElement('option');
-        opt.textContent = 'Нет анимаций в GLB';
+        opt.textContent = 'Нет анимаций';
         clipsSel.appendChild(opt);
       }
 
-      // камера кадрирует модель
+      // камера
       const dist = 2.2;
       camera.position.set(dist, dist*0.8, dist);
       controls.target.set(0, size.y*0.3*scale, 0);
       controls.update();
     }
 
-    // ===== UI events =====
     clipsSel.addEventListener('change', () => {
       if (!actions.length) return;
       const idx = parseInt(clipsSel.value, 10);
       if (Number.isNaN(idx)) return;
-      if (currentAction) currentAction.stop();
+      currentAction?.stop();
       currentAction = actions[idx];
       currentAction.reset().play();
       playPauseBtn.textContent = 'Pause';
@@ -151,23 +214,22 @@
 
     playPauseBtn.addEventListener('click', () => {
       if (!mixer || !currentAction) return;
-      if (currentAction.paused) { currentAction.paused = false; playPauseBtn.textContent = 'Pause'; }
-      else { currentAction.paused = true; playPauseBtn.textContent = 'Play'; }
+      currentAction.paused = !currentAction.paused;
+      playPauseBtn.textContent = currentAction.paused ? 'Play' : 'Pause';
     });
 
     reloadBtn.addEventListener('click', () => loadModel(getModelUrl()));
 
     loadBtn.addEventListener('click', () => {
       const u = urlInput.value.trim();
-      if (u) {
-        const next = new URL(location.href);
-        next.searchParams.set('model', u);
-        history.replaceState({}, '', next.toString());
-        loadModel(u);
-      }
+      if (!u) return;
+      const next = new URL(location.href);
+      next.searchParams.set('model', u);
+      history.replaceState({}, '', next.toString());
+      loadModel(u);
     });
 
-    // ===== Resize & Loop =====
+    // ===== Resize & loop =====
     addEventListener('resize', () => {
       camera.aspect = innerWidth/innerHeight;
       camera.updateProjectionMatrix();
