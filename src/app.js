@@ -12,6 +12,8 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // ---------- DOM ----------
 const canvas = document.getElementById('app');
 if (!canvas) throw new Error('Canvas #app not found. Добавь <canvas id="app"></canvas> перед скриптом.');
+// гарантируем, что все жесты идут в канвас/контролы
+canvas.style.touchAction = 'none';
 
 // ---------- Renderer / Scene / Camera ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -29,6 +31,11 @@ camera.position.set(2.2, 1.6, 2.2);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.enablePan = false;      // запрет перетаскивания сцены
+// controls.enableZoom = false;   // при желании можно запретить зум
+
+// страховка от системного скролла на iOS/Android
+window.addEventListener('touchmove', (e) => e.target === canvas && e.preventDefault(), { passive: false });
 
 // ---------- Резервное освещение (на случай без HDR) ----------
 scene.add(new THREE.HemisphereLight(0xffffff, 0x202020, 0.55));
@@ -59,7 +66,15 @@ function applyHDR(url) {
 }
 applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* оставим цвет */ });
 
-
+// ---------- Ground (слегка ниже нуля, чтобы не мерцал) ----------
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(4, 64),
+  new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.001;
+ground.receiveShadow = true;
+scene.add(ground);
 
 // ---------- Loaders ----------
 const gltfLoader = new GLTFLoader();
@@ -101,7 +116,7 @@ async function loadModel(url) {
     // ----- нормализация / масштаб -----
     modelRoot.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
 
-    // центрируем к (0,0,0)
+    // центр в (0,0,0)
     const box0 = new THREE.Box3().setFromObject(modelRoot);
     const size0 = new THREE.Vector3(); box0.getSize(size0);
     const center0 = new THREE.Vector3(); box0.getCenter(center0);
@@ -125,10 +140,11 @@ async function loadModel(url) {
     const dist = (halfMax / Math.tan(fov / 2)) * fit;
 
     camera.position.set(dist, dist * 0.6, dist);
+
     const targetY = Math.min(size1.y * 0.5, 1.2);
     controls.target.set(0, targetY, 0);
-    controls.minPolarAngle = 0.05;
-    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.minPolarAngle = 0.05;             // не смотреть строго сверху
+    controls.maxPolarAngle = Math.PI / 2.05;   // не опускаться ниже горизонта
     controls.minDistance = dist * 0.4;
     controls.maxDistance = dist * 3;
     controls.update();
