@@ -1,1 +1,15 @@
-<script type="module" src="/src/app.js"></script>
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Viewer</title>
+  </head>
+  <body>
+    <!-- канвас, в который рендерит three.js -->
+    <canvas id="app"></canvas>
+
+    <!-- входная точка Vite; на проде Vite сам заменит её на app-[hash].js -->
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
