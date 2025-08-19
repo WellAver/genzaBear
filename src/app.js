@@ -11,9 +11,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
 // ---------- DOM ----------
 const canvas = document.getElementById('app');
-if (!canvas) {
-  throw new Error('Canvas #app not found. Добавь <canvas id="app"></canvas> в index.html перед скриптом.');
-}
+if (!canvas) throw new Error('Canvas #app not found. Добавь <canvas id="app"></canvas> перед скриптом.');
 
 // ---------- Renderer / Scene / Camera ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -24,25 +22,22 @@ renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x101014); // пока HDR не загрузился
+scene.background = new THREE.Color(0x101014);
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(2.2, 1.6, 2.2);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 1.0, 0);
 controls.enableDamping = true;
 
-// ---------- Освещение (резервное, чтобы не было "чёрного" даже без HDR) ----------
-const hemi = new THREE.HemisphereLight(0xffffff, 0x202020, 0.55);
-scene.add(hemi);
+// ---------- Резервное освещение (на случай без HDR) ----------
+scene.add(new THREE.HemisphereLight(0xffffff, 0x202020, 0.55));
 const dir = new THREE.DirectionalLight(0xffffff, 0.85);
 dir.position.set(3, 5, 2);
 scene.add(dir);
 
 // ---------- HDR background/environment ----------
 const pmrem = new THREE.PMREMGenerator(renderer);
-// рабочие HDR с PolyHaven (любой можно заменить на свой)
 const HDR_PRIMARY  = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr';
 const HDR_FALLBACK = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr';
 
@@ -62,16 +57,17 @@ function applyHDR(url) {
     );
   });
 }
+applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* оставим цвет */ });
 
-// пытаемся загрузить основной HDR, если не вышло — запасной
-applyHDR(HDR_PRIMARY).catch(() => {
-  console.warn('Primary HDR failed, trying fallback…');
-  return applyHDR(HDR_FALLBACK);
-}).catch(err => {
-  console.warn('HDR load failed, keeping solid background:', err);
-});
-
-
+// ---------- Ground (слегка ниже нуля, чтобы не мерцал) ----------
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(4, 64),
+  new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.001;
+ground.receiveShadow = true;
+scene.add(ground);
 
 // ---------- Loaders ----------
 const gltfLoader = new GLTFLoader();
@@ -86,8 +82,7 @@ let modelRoot = null;
 // ---------- Utils ----------
 function getModelUrl() {
   const q = new URLSearchParams(location.search);
-  // по умолчанию берём модель из /public/avatar.glb
-  return q.get('model') || (BASE + 'avatar.glb');
+  return q.get('model') || (BASE + 'avatar.glb'); // /public/avatar.glb по умолчанию
 }
 
 // ---------- Load model ----------
@@ -111,27 +106,45 @@ async function loadModel(url) {
     modelRoot = gltf.scene;
     scene.add(modelRoot);
 
-    // нормализация и кадрирование
+    // ----- нормализация / масштаб -----
     modelRoot.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
-    const box = new THREE.Box3().setFromObject(modelRoot);
-    const size = new THREE.Vector3(); box.getSize(size);
-    const center = new THREE.Vector3(); box.getCenter(center);
-    modelRoot.position.sub(center);
-    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+
+    // центрируем к (0,0,0)
+    const box0 = new THREE.Box3().setFromObject(modelRoot);
+    const size0 = new THREE.Vector3(); box0.getSize(size0);
+    const center0 = new THREE.Vector3(); box0.getCenter(center0);
+    modelRoot.position.sub(center0);
+
+    // масштаб под кадр
+    const maxDim = Math.max(size0.x, size0.y, size0.z) || 1;
     const scale = 1.6 / maxDim;
     modelRoot.scale.setScalar(scale);
 
-    // камера
-    const dist = 2.2;
-    camera.position.set(dist, dist * 0.8, dist);
-    controls.target.set(0, size.y * 0.3 * scale, 0);
+    // поднять так, чтобы низ модели был на y = 0
+    const box1 = new THREE.Box3().setFromObject(modelRoot);
+    const minY = box1.min.y;
+    modelRoot.position.y -= minY;
+
+    // ----- камера / контролы -----
+    const size1 = box1.getSize(new THREE.Vector3());
+    const fit = 1.2;
+    const fov = camera.fov * (Math.PI / 180);
+    const halfMax = Math.max(size1.x, size1.y) * 0.5;
+    const dist = (halfMax / Math.tan(fov / 2)) * fit;
+
+    camera.position.set(dist, dist * 0.6, dist);
+    const targetY = Math.min(size1.y * 0.5, 1.2);
+    controls.target.set(0, targetY, 0);
+    controls.minPolarAngle = 0.05;
+    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.minDistance = dist * 0.4;
+    controls.maxDistance = dist * 3;
     controls.update();
 
-    // анимация — автозапуск первой
+    // ----- анимация (первая клипа) -----
     if (gltf.animations?.length) {
       mixer = new THREE.AnimationMixer(modelRoot);
-      const action = mixer.clipAction(gltf.animations[0]);
-      action.reset().play();
+      mixer.clipAction(gltf.animations[0]).reset().play();
     }
   } catch (e) {
     console.error('Model load failed:', e);
