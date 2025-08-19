@@ -79,7 +79,7 @@ function applyHDR(url) {
 applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* оставим цвет */ });
 
 // ---------- Контактная тень (вместо чёрного пола) ----------
-const shadowMat = new THREE.ShadowMaterial({ opacity: 0.35 }); // интенсивность тени
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 }); // интенсивность тени
 const shadowCircle = new THREE.Mesh(new THREE.CircleGeometry(1, 64), shadowMat);
 shadowCircle.rotation.x = -Math.PI / 2;
 shadowCircle.position.y = 0; // можно -0.001, если мерцает
