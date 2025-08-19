@@ -71,14 +71,7 @@ applyHDR(HDR_PRIMARY).catch(() => {
   console.warn('HDR load failed, keeping solid background:', err);
 });
 
-// ---------- Ground (опционально) ----------
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(4, 64),
-  new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = 0;
-scene.add(ground);
+
 
 // ---------- Loaders ----------
 const gltfLoader = new GLTFLoader();
