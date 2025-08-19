@@ -1,3 +1,11 @@
-html, body { height: 100%; }
-body { margin: 0; background: #0f0f10; color: #eee; }
-#app { position: fixed; inset: 0; display: block; }
+html, body { height: 100%; margin: 0; }
+body {
+  overflow: hidden;              /* запрет скролла */
+  overscroll-behavior: none;     /* нет pull-to-refresh/оверскролла */
+  touch-action: none;            /* общий блок тач-жестов для body */
+}
+#app {
+  position: fixed; inset: 0;     /* канвас перекрывает экран */
+  display: block;
+  touch-action: none;            /* все жесты идут в OrbitControls */
+}
