@@ -59,15 +59,7 @@ function applyHDR(url) {
 }
 applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* оставим цвет */ });
 
-// ---------- Ground (слегка ниже нуля, чтобы не мерцал) ----------
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(4, 64),
-  new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.001;
-ground.receiveShadow = true;
-scene.add(ground);
+
 
 // ---------- Loaders ----------
 const gltfLoader = new GLTFLoader();
