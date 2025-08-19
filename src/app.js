@@ -12,7 +12,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // ---------- DOM ----------
 const canvas = document.getElementById('app');
 if (!canvas) throw new Error('Canvas #app not found. Добавь <canvas id="app"></canvas> перед скриптом.');
-canvas.style.touchAction = 'none'; // все жесты в канвас
+canvas.style.touchAction = 'none';
 
 // ---------- Renderer / Scene / Camera ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -26,21 +26,17 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 
-// Статичный красивый фон (градиент), не вращается при орбите
-function makeGradientTexture(top = '#14151a', bottom = '#23252c') {
-  const c = document.createElement('canvas');
-  c.width = c.height = 512;
-  const g = c.getContext('2d');
-  const grd = g.createLinearGradient(0, 0, 0, 512);
-  grd.addColorStop(0, top);
-  grd.addColorStop(1, bottom);
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 512, 512);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-scene.background = makeGradientTexture('#14151a', '#23252c');
+// ---------- Фон: СТАТИЧНАЯ КАРТИНКА (не вращается) ----------
+const BG_URL = BASE + 'bg.jpg'; // положи файл в public/bg.jpg
+new THREE.TextureLoader().load(
+  BG_URL,
+  (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex; // 2D фоновая картинка
+  },
+  undefined,
+  (err) => console.warn('BG image load failed:', err)
+);
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(2.2, 1.6, 2.2);
@@ -51,7 +47,6 @@ controls.enablePan = false;
 controls.minPolarAngle = 0.05;
 controls.maxPolarAngle = Math.PI / 2.05;
 
-// страховка от системного скролла на мобильных
 window.addEventListener('touchmove', (e) => {
   if (e.target === canvas) e.preventDefault();
 }, { passive: false });
@@ -71,7 +66,7 @@ dir.shadow.camera.top = 3;
 dir.shadow.camera.bottom = -3;
 scene.add(dir);
 
-// ---------- HDR (только для освещения, фон остаётся градиентом) ----------
+// ---------- HDR (ТОЛЬКО для освещения, фон-картинку не трогаем) ----------
 const pmrem = new THREE.PMREMGenerator(renderer);
 const HDR_PRIMARY  = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr';
 const HDR_FALLBACK = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr';
@@ -83,7 +78,7 @@ function applyHDR(url) {
       (hdr) => {
         const env = pmrem.fromEquirectangular(hdr).texture;
         hdr.dispose();
-        scene.environment = env; // отражения/IBL
+        scene.environment = env;   // освещение/отражения
         resolve();
       },
       undefined,
@@ -91,13 +86,13 @@ function applyHDR(url) {
     );
   });
 }
-applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => {/* останется фон-градиент + лампы */});
+applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* останутся лампы */ });
 
-// ---------- Контактная тень (аккуратная «пятнышко») ----------
-const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 }); // прозрачность тени
+// ---------- Контактная тень ----------
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 });
 const shadowCircle = new THREE.Mesh(new THREE.CircleGeometry(1, 64), shadowMat);
 shadowCircle.rotation.x = -Math.PI / 2;
-shadowCircle.position.y = 0; // при мерцании можно -0.001
+shadowCircle.position.y = 0;
 shadowCircle.receiveShadow = true;
 scene.add(shadowCircle);
 
@@ -159,7 +154,7 @@ async function loadModel(url) {
     modelRoot.position.y -= minY;
 
     // радиус контактной тени под габарит XZ
-    const radius = Math.max(size1.x, size1.z) * 0.55; // 0.45..0.65 по вкусу
+    const radius = Math.max(size1.x, size1.z) * 0.55;
     shadowCircle.scale.setScalar(radius);
 
     // камера/контролы
@@ -173,7 +168,7 @@ async function loadModel(url) {
     controls.maxDistance = dist * 3;
     controls.update();
 
-    // анимация (первая клипа)
+    // анимация
     if (gltf.animations?.length) {
       mixer = new THREE.AnimationMixer(modelRoot);
       mixer.clipAction(gltf.animations[0]).reset().play();
@@ -195,12 +190,11 @@ const clock = new THREE.Clock();
   requestAnimationFrame(loop);
   const dt = clock.getDelta();
 
-  // фиксируем root-motion: модель остаётся на месте (без «уезда» по X/Z)
+  // фиксируем root-motion: модель остаётся на месте
   if (modelRoot) {
     modelRoot.position.x = 0;
     modelRoot.position.z = 0;
-    // Если клип крутит корень и это мешает демо:
-    // modelRoot.rotation.y = 0;
+    // modelRoot.rotation.y = 0; // включи, если клип крутит корень и это мешает
   }
 
   mixer?.update(dt);
