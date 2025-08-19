@@ -1,6 +1,4 @@
-// Надёжный BASE для GitHub Pages:
-// 1) сначала пробуем vite: import.meta.env.BASE_URL
-// 2) если нет — берём из URL вида /<repo>/...
+// Надёжный BASE для GitHub Pages
 const BASE =
   (import.meta?.env?.BASE_URL) ??
   (location.pathname.split('/').slice(0, 2).join('/') + '/');
@@ -11,13 +9,13 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
-// --- DOM ---
+// ---------- DOM ----------
 const canvas = document.getElementById('app');
 if (!canvas) {
-  throw new Error('Canvas #app not found. Убедись, что в index.html есть <canvas id="app"></canvas> перед скриптом.');
+  throw new Error('Canvas #app not found. Добавь <canvas id="app"></canvas> в index.html перед скриптом.');
 }
 
-// --- Renderer / Scene / Camera ---
+// ---------- Renderer / Scene / Camera ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -35,26 +33,45 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 0);
 controls.enableDamping = true;
 
-// --- HDR background/environment из /public ---
-const pmrem = new THREE.PMREMGenerator(renderer);
-new RGBELoader()
-  .setPath(BASE) // критично для Pages
-  .load(
-    'venice_sunset_1k.hdr',
-    (hdr) => {
-      const env = pmrem.fromEquirectangular(hdr).texture;
-      hdr.dispose();
-      scene.background = env;
-      scene.environment = env;
-    },
-    undefined,
-    (err) => {
-      console.warn('HDR load failed, fallback to solid color:', err);
-      scene.background = new THREE.Color(0x101014);
-    }
-  );
+// ---------- Освещение (резервное, чтобы не было "чёрного" даже без HDR) ----------
+const hemi = new THREE.HemisphereLight(0xffffff, 0x202020, 0.55);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xffffff, 0.85);
+dir.position.set(3, 5, 2);
+scene.add(dir);
 
-// --- Ground (опционально) ---
+// ---------- HDR background/environment ----------
+const pmrem = new THREE.PMREMGenerator(renderer);
+// рабочие HDR с PolyHaven (любой можно заменить на свой)
+const HDR_PRIMARY  = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr';
+const HDR_FALLBACK = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr';
+
+function applyHDR(url) {
+  return new Promise((resolve, reject) => {
+    new RGBELoader().load(
+      url,
+      (hdr) => {
+        const env = pmrem.fromEquirectangular(hdr).texture;
+        hdr.dispose();
+        scene.background = env;
+        scene.environment = env;
+        resolve();
+      },
+      undefined,
+      reject
+    );
+  });
+}
+
+// пытаемся загрузить основной HDR, если не вышло — запасной
+applyHDR(HDR_PRIMARY).catch(() => {
+  console.warn('Primary HDR failed, trying fallback…');
+  return applyHDR(HDR_FALLBACK);
+}).catch(err => {
+  console.warn('HDR load failed, keeping solid background:', err);
+});
+
+// ---------- Ground (опционально) ----------
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(4, 64),
   new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
@@ -63,49 +80,46 @@ ground.rotation.x = -Math.PI / 2;
 ground.position.y = 0;
 scene.add(ground);
 
-// --- Loaders ---
+// ---------- Loaders ----------
 const gltfLoader = new GLTFLoader();
 const draco = new DRACOLoader();
 draco.setDecoderPath('https://unpkg.com/three@0.165.0/examples/jsm/libs/draco/');
 gltfLoader.setDRACOLoader(draco);
 
-// --- State ---
+// ---------- State ----------
 let mixer = null;
 let modelRoot = null;
 
-// --- Utils ---
+// ---------- Utils ----------
 function getModelUrl() {
   const q = new URLSearchParams(location.search);
   // по умолчанию берём модель из /public/avatar.glb
   return q.get('model') || (BASE + 'avatar.glb');
 }
 
-// --- Load model ---
+// ---------- Load model ----------
 async function loadModel(url) {
   try {
-    // cache-bust
-    url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now(); // cache-bust
 
-    // cleanup
     if (mixer) { mixer.stopAllAction(); mixer = null; }
     if (modelRoot) {
       scene.remove(modelRoot);
-      modelRoot.traverse((o) => {
+      modelRoot.traverse(o => {
         if (o.isMesh) {
           o.geometry?.dispose?.();
-          (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m?.dispose?.());
+          (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m?.dispose?.());
         }
       });
       modelRoot = null;
     }
 
-    // load
     const gltf = await gltfLoader.loadAsync(url);
     modelRoot = gltf.scene;
     scene.add(modelRoot);
 
-    // normalize & frame
-    modelRoot.traverse((o) => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
+    // нормализация и кадрирование
+    modelRoot.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.frustumCulled = false; } });
     const box = new THREE.Box3().setFromObject(modelRoot);
     const size = new THREE.Vector3(); box.getSize(size);
     const center = new THREE.Vector3(); box.getCenter(center);
@@ -114,13 +128,13 @@ async function loadModel(url) {
     const scale = 1.6 / maxDim;
     modelRoot.scale.setScalar(scale);
 
-    // camera
+    // камера
     const dist = 2.2;
     camera.position.set(dist, dist * 0.8, dist);
     controls.target.set(0, size.y * 0.3 * scale, 0);
     controls.update();
 
-    // animations (autoplay first)
+    // анимация — автозапуск первой
     if (gltf.animations?.length) {
       mixer = new THREE.AnimationMixer(modelRoot);
       const action = mixer.clipAction(gltf.animations[0]);
@@ -131,7 +145,7 @@ async function loadModel(url) {
   }
 }
 
-// --- Resize & loop ---
+// ---------- Resize & loop ----------
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -146,6 +160,6 @@ const clock = new THREE.Clock();
   renderer.render(scene, camera);
 })();
 
-// --- Start ---
+// ---------- Start ----------
 console.log('BASE =', BASE, 'modelURL =', getModelUrl());
 loadModel(getModelUrl());
