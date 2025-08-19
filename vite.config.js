@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: '/genzaBear/',               
+  base: '/genzaBear/',  
   build: {
     outDir: 'dist',
     assetsDir: '',
