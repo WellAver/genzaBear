@@ -3,7 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: {}   # запуск вручную из Actions
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -23,11 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'         # кэшируем node_modules по package.json (lock не обязателен)
 
-      # ВАЖНО: не npm ci (он требует lock), а обычная установка
       - run: npm install --no-audit --no-fund
-
       - run: npm run build
 
       - uses: actions/upload-pages-artifact@v3
