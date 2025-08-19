@@ -1,4 +1,6 @@
+// Vite base path для GitHub Pages (генерируется из vite.config.js -> base)
 const BASE = (import.meta?.env?.BASE_URL) ?? '/';
+
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -25,10 +27,10 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 1.0, 0);
 controls.enableDamping = true;
 
-// HDR background/environment (локально из /public)
+// HDR background/environment (assets из /public)
 const pmrem = new THREE.PMREMGenerator(renderer);
 new RGBELoader()
-  .setPath('/') // public/
+  .setPath(BASE) // ВАЖНО: BASE, а не '/'
   .load('venice_sunset_1k.hdr', (hdr) => {
     const env = pmrem.fromEquirectangular(hdr).texture;
     hdr.dispose();
@@ -39,7 +41,7 @@ new RGBELoader()
     scene.background = new THREE.Color(0x101014);
   });
 
-// Мягкий «пол»
+// Мягкий «пол» (опционально)
 const ground = new THREE.Mesh(
   new THREE.CircleGeometry(4, 64),
   new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.9, metalness: 0.0 })
@@ -51,23 +53,26 @@ scene.add(ground);
 // Loaders
 const gltfLoader = new GLTFLoader();
 const draco = new DRACOLoader();
-// Используем CDN-декодер, чтобы не таскать бинарники в репо
-draco.setDecoderPath('https://unpkg.com/three@0.165.0/examples/jsm/libs/draco/');
+draco.setDecoderPath('https://unpkg.com/three@0.165.0/examples/jsm/libs/draco/'); // CDN ок
 gltfLoader.setDRACOLoader(draco);
 
 // State
 let mixer = null;
 let modelRoot = null;
 
-// Utils
+// ---- Utils ----
 function getModelUrl() {
   const q = new URLSearchParams(location.search);
-  return q.get('model') || '/avatar.glb'; // public/avatar.glb по умолчанию
+  // по умолчанию грузим public/avatar.glb c учётом BASE
+  return q.get('model') || (BASE + 'avatar.glb');
 }
 
+// ---- Loading ----
 async function loadModel(url) {
   try {
-    url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now(); // cache-bust
+    // cache-bust
+    url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+
     if (mixer) { mixer.stopAllAction(); mixer = null; }
     if (modelRoot) {
       scene.remove(modelRoot);
