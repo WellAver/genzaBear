@@ -12,7 +12,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 // ---------- DOM ----------
 const canvas = document.getElementById('app');
 if (!canvas) throw new Error('Canvas #app not found. Добавь <canvas id="app"></canvas> перед скриптом.');
-canvas.style.touchAction = 'none';
+canvas.style.touchAction = 'none'; // все жесты в канвас
 
 // ---------- Renderer / Scene / Camera ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -26,23 +26,16 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 
-// ---------- Фон: СТАТИЧНАЯ КАРТИНКА (не вращается) ----------
-const BG_URL = BASE + 'bg.jpg'; // положи файл в public/bg.jpg
-// ЗАМЕНИ блоки BG и HDR на это:
-
-// --- Equirectangular панорама как фон И как окружение ---
+// ---------- ФОН: ЖЁСТКО СТАЦИОНАРНАЯ 2D-КАРТИНКА ----------
 new THREE.TextureLoader().load(
-  BASE + 'bg.jpg',                                   // bg.jpg должен быть панорамой 2:1
+  BASE + 'bg.jpg', // положи картинку в public/bg.jpg
   (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.mapping = THREE.EquirectangularReflectionMapping; // ключевая строка
-    scene.background = tex;                                // купольный фон
-    // Освещение/отражения из LDR-панорамы (можно без внешнего HDR)
-    const env = new THREE.PMREMGenerator(renderer).fromEquirectangular(tex).texture;
-    scene.environment = env;
+    // Важное отличие: НЕ задаём EquirectangularReflectionMapping!
+    scene.background = tex; // картинка не будет "вилять" при вращении камеры
   },
   undefined,
-  (err) => console.warn('BG equirectangular load failed:', err)
+  (err) => console.warn('BG image load failed:', err)
 );
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
@@ -54,6 +47,7 @@ controls.enablePan = false;
 controls.minPolarAngle = 0.05;
 controls.maxPolarAngle = Math.PI / 2.05;
 
+// страховка от системного скролла на мобильных
 window.addEventListener('touchmove', (e) => {
   if (e.target === canvas) e.preventDefault();
 }, { passive: false });
@@ -73,7 +67,7 @@ dir.shadow.camera.top = 3;
 dir.shadow.camera.bottom = -3;
 scene.add(dir);
 
-// ---------- HDR (ТОЛЬКО для освещения, фон-картинку не трогаем) ----------
+// ---------- HDR ДЛЯ ОСВЕЩЕНИЯ (фон не трогаем) ----------
 const pmrem = new THREE.PMREMGenerator(renderer);
 const HDR_PRIMARY  = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr';
 const HDR_FALLBACK = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr';
@@ -85,7 +79,7 @@ function applyHDR(url) {
       (hdr) => {
         const env = pmrem.fromEquirectangular(hdr).texture;
         hdr.dispose();
-        scene.environment = env;   // освещение/отражения
+        scene.environment = env; // только IBL/отражения
         resolve();
       },
       undefined,
@@ -96,10 +90,10 @@ function applyHDR(url) {
 applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* останутся лампы */ });
 
 // ---------- Контактная тень ----------
-const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 });
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 }); // прозрачность тени
 const shadowCircle = new THREE.Mesh(new THREE.CircleGeometry(1, 64), shadowMat);
 shadowCircle.rotation.x = -Math.PI / 2;
-shadowCircle.position.y = 0;
+shadowCircle.position.y = 0; // при мерцании можно -0.001
 shadowCircle.receiveShadow = true;
 scene.add(shadowCircle);
 
@@ -201,7 +195,7 @@ const clock = new THREE.Clock();
   if (modelRoot) {
     modelRoot.position.x = 0;
     modelRoot.position.z = 0;
-    // modelRoot.rotation.y = 0; // включи, если клип крутит корень и это мешает
+    // modelRoot.rotation.y = 0; // включи при необходимости
   }
 
   mixer?.update(dt);
