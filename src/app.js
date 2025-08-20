@@ -26,18 +26,6 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 
-// ---------- ФОН: ЖЁСТКО СТАЦИОНАРНАЯ 2D-КАРТИНКА ----------
-new THREE.TextureLoader().load(
-  BASE + 'bg.jpg', // положи картинку в public/bg.jpg
-  (tex) => {
-    tex.colorSpace = THREE.SRGBColorSpace;
-    // Важное отличие: НЕ задаём EquirectangularReflectionMapping!
-    scene.background = tex; // картинка не будет "вилять" при вращении камеры
-  },
-  undefined,
-  (err) => console.warn('BG image load failed:', err)
-);
-
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(2.2, 1.6, 2.2);
 
@@ -46,13 +34,9 @@ controls.enableDamping = true;
 controls.enablePan = false;
 controls.minPolarAngle = 0.05;
 controls.maxPolarAngle = Math.PI / 2.05;
+window.addEventListener('touchmove', (e) => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
 
-// страховка от системного скролла на мобильных
-window.addEventListener('touchmove', (e) => {
-  if (e.target === canvas) e.preventDefault();
-}, { passive: false });
-
-// ---------- Свет ----------
+// ---------- Свет (резерв) ----------
 scene.add(new THREE.HemisphereLight(0xffffff, 0x202020, 0.55));
 const dir = new THREE.DirectionalLight(0xffffff, 0.85);
 dir.position.set(3, 5, 2);
@@ -67,27 +51,39 @@ dir.shadow.camera.top = 3;
 dir.shadow.camera.bottom = -3;
 scene.add(dir);
 
-// ---------- HDR ДЛЯ ОСВЕЩЕНИЯ (фон не трогаем) ----------
+// ---------- HDRI купол (фон + освещение из панорамы) ----------
 const pmrem = new THREE.PMREMGenerator(renderer);
-const HDR_PRIMARY  = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/venice_sunset_1k.hdr';
-const HDR_FALLBACK = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_03_1k.hdr';
 
-function applyHDR(url) {
-  return new Promise((resolve, reject) => {
-    new RGBELoader().load(
-      url,
-      (hdr) => {
-        const env = pmrem.fromEquirectangular(hdr).texture;
-        hdr.dispose();
-        scene.environment = env; // только IBL/отражения
-        resolve();
+// 1) Положи equirect панораму 2:1 в public/bg.hdr (желательно HDR/EXR).
+// 2) Если у тебя JPG/PNG 2:1 — положи public/bg.jpg. Мы попробуем .hdr, затем .jpg.
+const HDRI_HDR = BASE + 'bg.hdr';
+const HDRI_JPG = BASE + 'bg.jpg';
+
+// загрузка .hdr
+new RGBELoader().load(
+  HDRI_HDR,
+  (tex) => {
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;                                // «купол» как фон
+    scene.environment = pmrem.fromEquirectangular(tex).texture; // IBL/отражения
+  },
+  undefined,
+  // если .hdr не найден — пробуем .jpg 2:1
+  () => {
+    new THREE.TextureLoader().load(
+      HDRI_JPG,
+      (jpg) => {
+        jpg.mapping = THREE.EquirectangularReflectionMapping;
+        jpg.colorSpace = THREE.SRGBColorSpace;
+        scene.background = jpg;
+        scene.environment = pmrem.fromEquirectangular(jpg).texture;
       },
       undefined,
-      reject
+      (err) => console.warn('Equirect BG load failed (.hdr & .jpg):', err)
     );
-  });
-}
-applyHDR(HDR_PRIMARY).catch(() => applyHDR(HDR_FALLBACK)).catch(() => { /* останутся лампы */ });
+  }
+);
 
 // ---------- Контактная тень ----------
 const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 }); // прозрачность тени
