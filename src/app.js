@@ -28,14 +28,21 @@ const scene = new THREE.Scene();
 
 // ---------- Фон: СТАТИЧНАЯ КАРТИНКА (не вращается) ----------
 const BG_URL = BASE + 'bg.jpg'; // положи файл в public/bg.jpg
+// ЗАМЕНИ блоки BG и HDR на это:
+
+// --- Equirectangular панорама как фон И как окружение ---
 new THREE.TextureLoader().load(
-  BG_URL,
+  BASE + 'bg.jpg',                                   // bg.jpg должен быть панорамой 2:1
   (tex) => {
     tex.colorSpace = THREE.SRGBColorSpace;
-    scene.background = tex; // 2D фоновая картинка
+    tex.mapping = THREE.EquirectangularReflectionMapping; // ключевая строка
+    scene.background = tex;                                // купольный фон
+    // Освещение/отражения из LDR-панорамы (можно без внешнего HDR)
+    const env = new THREE.PMREMGenerator(renderer).fromEquirectangular(tex).texture;
+    scene.environment = env;
   },
   undefined,
-  (err) => console.warn('BG image load failed:', err)
+  (err) => console.warn('BG equirectangular load failed:', err)
 );
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
