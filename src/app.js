@@ -44,33 +44,35 @@ dir.shadow.camera.top = 3;
 dir.shadow.camera.bottom = -3;
 scene.add(dir);
 
-// ---------- HDRI купол (фон + освещение) ----------
+// ---------- HDRI для освещения (PMREM), фон визуально — отдельный скайдом ----------
 const pmrem = new THREE.PMREMGenerator(renderer);
-const HDRI_HDR = BASE + 'bg.hdr';
-const HDRI_JPG = BASE + 'bg.jpg';
 
+// HDRI свет
 new RGBELoader().load(
-  HDRI_HDR,
-  (tex) => {
-    tex.mapping = THREE.EquirectangularReflectionMapping;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    scene.background = tex;                                  // панорамный фон
-    scene.environment = pmrem.fromEquirectangular(tex).texture; // IBL/отражения
+  BASE + 'bg.hdr',
+  (hdr) => {
+    hdr.mapping = THREE.EquirectangularReflectionMapping;
+    hdr.colorSpace = THREE.SRGBColorSpace;
+    scene.environment = pmrem.fromEquirectangular(hdr).texture; // IBL/отражения
   },
   undefined,
-  () => {
-    new THREE.TextureLoader().load(
-      HDRI_JPG,
-      (jpg) => {
-        jpg.mapping = THREE.EquirectangularReflectionMapping;
-        jpg.colorSpace = THREE.SRGBColorSpace;
-        scene.background = jpg;
-        scene.environment = pmrem.fromEquirectangular(jpg).texture;
-      },
-      undefined,
-      (err) => console.warn('Equirect BG load failed (.hdr & .jpg):', err)
-    );
-  }
+  () => { /* если нет hdr — останутся лампы */ }
+);
+
+// Скайдом для фона (крутим как объект)
+let skydome = null;
+new THREE.TextureLoader().load(
+  BASE + 'bg_sky.jpg',
+  (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide });
+    const geo = new THREE.SphereGeometry(50, 64, 64);
+    skydome = new THREE.Mesh(geo, mat);
+    skydome.rotation.y = 0;
+    scene.add(skydome);
+  },
+  undefined,
+  (err) => console.warn('bg_sky.jpg load failed:', err)
 );
 
 // ---------- Контактная тень ----------
@@ -94,7 +96,7 @@ let modelRoot = null;
 // ---------- Utils ----------
 function getModelUrl() {
   const q = new URLSearchParams(location.search);
-  return q.get('model') || (BASE + 'avatar.glb');
+  return q.get('model') || (BASE + 'avatar.glb'); // /public/avatar.glb по умолчанию
 }
 
 // ---------- Load model ----------
@@ -159,10 +161,9 @@ let dragging = false;
 let lastX = 0;
 let lastY = 0;
 
-// чувствительность вращения (подбери по вкусу)
-const ROTATE_X_SENS = 0.005; // наклон вперёд/назад (X)
-const ROTATE_Y_SENS = 0.01;  // поворот вокруг оси Y
-const MAX_TILT = Math.PI / 6; // ограничение наклона по X (±30°)
+const ROTATE_X_SENS = 0.005; // наклон
+const ROTATE_Y_SENS = 0.01;  // поворот вокруг Y
+const MAX_TILT = Math.PI / 6; // ±30°
 
 function pointerToNDC(ev) {
   const rect = canvas.getBoundingClientRect();
@@ -192,7 +193,6 @@ function onPointerMove(ev) {
   const dy = y - lastY;
   lastX = x; lastY = y;
 
-  // Вращаем ТОЛЬКО модель
   modelRoot.rotation.y += dx * ROTATE_Y_SENS;
   modelRoot.rotation.x = THREE.MathUtils.clamp(
     modelRoot.rotation.x + dy * ROTATE_X_SENS,
@@ -200,9 +200,7 @@ function onPointerMove(ev) {
   );
   ev.preventDefault();
 }
-function onPointerUp() {
-  dragging = false;
-}
+function onPointerUp() { dragging = false; }
 
 canvas.addEventListener('mousedown', onPointerDown);
 canvas.addEventListener('mousemove', onPointerMove);
@@ -212,7 +210,7 @@ canvas.addEventListener('touchstart', onPointerDown, { passive: false });
 canvas.addEventListener('touchmove', onPointerMove, { passive: false });
 window.addEventListener('touchend', onPointerUp);
 
-// Запрещаем колесом скроллить страницу; при желании можешь сделать зум модели
+// Запрещаем колесом скроллить страницу
 canvas.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
 
 // ---------- Resize & loop ----------
@@ -222,16 +220,21 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
+// скорость вращения купола (рад/сек) — подбери по вкусу
+const SKY_ROT_SPEED = 0.05;
+
 const clock = new THREE.Clock();
 (function loop() {
   requestAnimationFrame(loop);
   const dt = clock.getDelta();
 
+  // плавное вращение купола
+  if (skydome) skydome.rotation.y += SKY_ROT_SPEED * dt;
+
   // фиксируем root-motion: модель остаётся на месте
   if (modelRoot) {
     modelRoot.position.x = 0;
     modelRoot.position.z = 0;
-    // modelRoot.rotation.y = modelRoot.rotation.y; // (оставляем пользовательское вращение)
   }
 
   mixer?.update(dt);
