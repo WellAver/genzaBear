@@ -4,7 +4,6 @@ const BASE =
   (location.pathname.split('/').slice(0, 2).join('/') + '/');
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
@@ -28,13 +27,7 @@ const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(2.2, 1.6, 2.2);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.enablePan = false;
-controls.minPolarAngle = 0.05;
-controls.maxPolarAngle = Math.PI / 2.05;
-window.addEventListener('touchmove', (e) => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+camera.lookAt(0, 1.0, 0);
 
 // ---------- Свет (резерв) ----------
 scene.add(new THREE.HemisphereLight(0xffffff, 0x202020, 0.55));
@@ -51,25 +44,20 @@ dir.shadow.camera.top = 3;
 dir.shadow.camera.bottom = -3;
 scene.add(dir);
 
-// ---------- HDRI купол (фон + освещение из панорамы) ----------
+// ---------- HDRI купол (фон + освещение) ----------
 const pmrem = new THREE.PMREMGenerator(renderer);
-
-// 1) Положи equirect панораму 2:1 в public/bg.hdr (желательно HDR/EXR).
-// 2) Если у тебя JPG/PNG 2:1 — положи public/bg.jpg. Мы попробуем .hdr, затем .jpg.
 const HDRI_HDR = BASE + 'bg.hdr';
 const HDRI_JPG = BASE + 'bg.jpg';
 
-// загрузка .hdr
 new RGBELoader().load(
   HDRI_HDR,
   (tex) => {
     tex.mapping = THREE.EquirectangularReflectionMapping;
     tex.colorSpace = THREE.SRGBColorSpace;
-    scene.background = tex;                                // «купол» как фон
+    scene.background = tex;                                  // панорамный фон
     scene.environment = pmrem.fromEquirectangular(tex).texture; // IBL/отражения
   },
   undefined,
-  // если .hdr не найден — пробуем .jpg 2:1
   () => {
     new THREE.TextureLoader().load(
       HDRI_JPG,
@@ -86,10 +74,10 @@ new RGBELoader().load(
 );
 
 // ---------- Контактная тень ----------
-const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 }); // прозрачность тени
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.15 });
 const shadowCircle = new THREE.Mesh(new THREE.CircleGeometry(1, 64), shadowMat);
 shadowCircle.rotation.x = -Math.PI / 2;
-shadowCircle.position.y = 0; // при мерцании можно -0.001
+shadowCircle.position.y = 0;
 shadowCircle.receiveShadow = true;
 scene.add(shadowCircle);
 
@@ -106,13 +94,13 @@ let modelRoot = null;
 // ---------- Utils ----------
 function getModelUrl() {
   const q = new URLSearchParams(location.search);
-  return q.get('model') || (BASE + 'avatar.glb'); // /public/avatar.glb по умолчанию
+  return q.get('model') || (BASE + 'avatar.glb');
 }
 
 // ---------- Load model ----------
 async function loadModel(url) {
   try {
-    url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now(); // cache-bust
+    url += (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
 
     if (mixer) { mixer.stopAllAction(); mixer = null; }
     if (modelRoot) {
@@ -154,17 +142,6 @@ async function loadModel(url) {
     const radius = Math.max(size1.x, size1.z) * 0.55;
     shadowCircle.scale.setScalar(radius);
 
-    // камера/контролы
-    const fov = camera.fov * (Math.PI / 180);
-    const halfMax = Math.max(size1.x, size1.y) * 0.5;
-    const dist = (halfMax / Math.tan(fov / 2)) * 1.2;
-    camera.position.set(dist, dist * 0.6, dist);
-    const targetY = Math.min(size1.y * 0.5, 1.2);
-    controls.target.set(0, targetY, 0);
-    controls.minDistance = dist * 0.4;
-    controls.maxDistance = dist * 3;
-    controls.update();
-
     // анимация
     if (gltf.animations?.length) {
       mixer = new THREE.AnimationMixer(modelRoot);
@@ -174,6 +151,69 @@ async function loadModel(url) {
     console.error('Model load failed:', e);
   }
 }
+
+// ---------- Character-only Rotate Controller ----------
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+let dragging = false;
+let lastX = 0;
+let lastY = 0;
+
+// чувствительность вращения (подбери по вкусу)
+const ROTATE_X_SENS = 0.005; // наклон вперёд/назад (X)
+const ROTATE_Y_SENS = 0.01;  // поворот вокруг оси Y
+const MAX_TILT = Math.PI / 6; // ограничение наклона по X (±30°)
+
+function pointerToNDC(ev) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (('touches' in ev ? ev.touches[0].clientX : ev.clientX) - rect.left) / rect.width;
+  const y = (('touches' in ev ? ev.touches[0].clientY : ev.clientY) - rect.top) / rect.height;
+  ndc.set(x * 2 - 1, -(y * 2 - 1));
+}
+
+function onPointerDown(ev) {
+  pointerToNDC(ev);
+  if (!modelRoot) return;
+
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(modelRoot, true);
+  if (hits.length > 0) {
+    dragging = true;
+    lastX = 'touches' in ev ? ev.touches[0].clientX : ev.clientX;
+    lastY = 'touches' in ev ? ev.touches[0].clientY : ev.clientY;
+    ev.preventDefault();
+  }
+}
+function onPointerMove(ev) {
+  if (!dragging || !modelRoot) return;
+  const x = 'touches' in ev ? ev.touches[0].clientX : ev.clientX;
+  const y = 'touches' in ev ? ev.touches[0].clientY : ev.clientY;
+  const dx = x - lastX;
+  const dy = y - lastY;
+  lastX = x; lastY = y;
+
+  // Вращаем ТОЛЬКО модель
+  modelRoot.rotation.y += dx * ROTATE_Y_SENS;
+  modelRoot.rotation.x = THREE.MathUtils.clamp(
+    modelRoot.rotation.x + dy * ROTATE_X_SENS,
+    -MAX_TILT, MAX_TILT
+  );
+  ev.preventDefault();
+}
+function onPointerUp() {
+  dragging = false;
+}
+
+canvas.addEventListener('mousedown', onPointerDown);
+canvas.addEventListener('mousemove', onPointerMove);
+window.addEventListener('mouseup', onPointerUp);
+
+canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+window.addEventListener('touchend', onPointerUp);
+
+// Запрещаем колесом скроллить страницу; при желании можешь сделать зум модели
+canvas.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
 
 // ---------- Resize & loop ----------
 addEventListener('resize', () => {
@@ -191,11 +231,10 @@ const clock = new THREE.Clock();
   if (modelRoot) {
     modelRoot.position.x = 0;
     modelRoot.position.z = 0;
-    // modelRoot.rotation.y = 0; // включи при необходимости
+    // modelRoot.rotation.y = modelRoot.rotation.y; // (оставляем пользовательское вращение)
   }
 
   mixer?.update(dt);
-  controls.update();
   renderer.render(scene, camera);
 })();
 
